@@ -2,83 +2,197 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>이화 러너즈: 정복 완성하기</title>
+    <title>이화 러너즈: 복도 질주</title>
     <style>
-        body { margin: 0; background: #2c3e50; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; }
-        canvas { border: 4px solid #34495e; background: #ecf0f1; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+        body { margin: 0; background: #1a202c; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; font-family: 'Malgun Gothic', sans-serif; }
+        #gameCanvas { border: 6px solid #2d3748; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); border-radius: 12px; }
+        .tip { color: #a0aec0; margin-top: 15px; font-size: 14px; }
     </style>
 </head>
 <body>
-<canvas id="game" width="400" height="600"></canvas>
+
+<canvas id="gameCanvas" width="400" height="650"></canvas>
+<div class="tip">💡 키보드 [ 왼쪽(A) / 오른쪽(D) ] 방향키로 3라인을 이동하세요!</div>
+
 <script>
-const canvas = document.getElementById("game");
+const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 
-// 게임 데이터: 0단계 사복 -> 5단계 정복
-let player = { lane: 1, stage: 0 };
+// 3라인 중심 좌표 (좌, 가운데, 우) - 이제 완벽하게 3곳 다 달립니다!
+const lanes = [80, 200, 320];
+let player = { lane: 1, stage: 0, targetX: 200, currentX: 200 };
 let items = [];
-let gameRunning = true;
+let spawnTimer = 0;
+let teacherAlert = 5; // 5m에서 시작, 0m 되면 게임오버
+let score = 0;
+let isGameOver = false;
 
-// 1. 키보드 컨트롤 (이동)
-window.addEventListener("keydown", (e) => {
-    if(e.key === "ArrowLeft" && player.lane > 0) player.lane--;
-    if(e.key === "ArrowRight" && player.lane < 2) player.lane++;
+// 교복 5종 디자인 스펙트럼 (이화교복 가이드 완벽 매핑)
+const outfitBook = [
+    { name: "이화 블라우스", color: "#FFFFFF", line: "#27ae60", desc: "둥근 카라", trap: "사복 흰 티", trapColor: "#cbd5e1" },
+    { name: "이화 체크리본", color: "#064e3b", line: "#1e3a8a", desc: "녹/남 체크", trap: "사복 넥타이", trapColor: "#991b1b" },
+    { name: "이화 니트조끼", color: "#374151", line: "#f1c40f", desc: "꽃로고/노란줄", trap: "민무늬 조끼", trapColor: "#4b5563" },
+    { name: "이화 주름치마", color: "#1e1b4b", line: "#312e81", desc: "남색 플리츠", trap: "회색 추리닝", trapColor: "#94a3b8" },
+    { name: "이화 자켓", color: "#111827", line: "#d4af37", desc: "금장단추 4개", trap: "남색 후드티", trapColor: "#1e293b" }
+];
+
+// 조작 시스템 (A/D 및 방향키 완벽 연동)
+window.addEventListener("keydown", e => {
+    if (isGameOver) return;
+    if ((e.key === "ArrowLeft" || e.key === "a" || e.key === "A") && player.lane > 0) player.lane--;
+    if ((e.key === "ArrowRight" || e.key === "d" || e.key === "D") && player.lane < 2) player.lane++;
+    player.targetX = lanes[player.lane];
 });
 
-// 2. 게임 루프 (이동, 충돌, 그리기)
+function spawn() {
+    if (player.stage >= 5) return;
+    let rLane = Math.floor(Math.random() * 3);
+    let tLane = (rLane + Math.floor(Math.random() * 2) + 1) % 3;
+
+    // 진짜 교복 스폰
+    items.push({ x: lanes[rLane], y: -40, lane: rLane, isTrap: false, info: outfitBook[player.stage] });
+    // 가짜 사복 스폰 (플레이어를 헷갈리게 유도)
+    if (Math.random() > 0.3) {
+        items.push({ x: lanes[tLane], y: -40, lane: tLane, isTrap: true, info: outfitBook[player.stage] });
+    }
+}
+
 function update() {
-    if(!gameRunning) return;
+    if (isGameOver) return;
 
-    // 아이템 생성 (랜덤)
-    if(Math.random() < 0.02) {
-        items.push({ lane: Math.floor(Math.random()*3), y: 0, type: Math.floor(Math.random()*5) });
-    }
+    // 캐릭터 이동 부드럽게 연출 (서브웨이 서퍼 특유의 슬라이딩 감각)
+    player.currentX += (player.targetX - player.currentX) * 0.2;
 
-    // 아이템 이동 및 충돌
-    items.forEach((item, index) => {
-        item.y += 5;
-        // 충돌 체크
-        if(item.y > 480 && item.y < 520 && item.lane === player.lane) {
-            if(item.type === player.stage) {
-                player.stage++; // 순서대로 먹으면 단계 상승
+    spawnTimer++;
+    if (spawnTimer > 80) { spawn(); spawnTimer = 0; }
+
+    for (let i = items.length - 1; i >= 0; i--) {
+        items[i].y += 5; // 떨어지는 속도
+
+        // 충돌 범위 체크
+        if (items[i].y > 480 && items[i].y < 540 && items[i].lane === player.lane) {
+            if (!items[i].isTrap) {
+                player.stage++;
+                score += 100;
+                teacherAlert = Math.min(5, teacherAlert + 1); // 진짜 먹으면 선생님 멀어짐
             } else {
-                player.stage = Math.max(0, player.stage - 1); // 엉뚱한 거 먹으면 하락
+                if (player.stage > 0) player.stage--; // 사복 먹으면 이전 단계 롤백
+                teacherAlert -= 2; // 선생님이 단숨에 등 뒤까지 쫓아옴
             }
-            items.splice(index, 1);
+            items.splice(i, 1);
+            continue;
         }
-    });
+        if (items[i].y > 650) items.splice(i, 1);
+    }
 
-    draw();
-    requestAnimationFrame(update);
+    if (teacherAlert <= 0) { isGameOver = true; }
 }
 
-// 3. 화면 그리기 (학교 배경 + 아이템 + 캐릭터)
 function draw() {
-    ctx.clearRect(0, 0, 400, 600);
-    
-    // 배경: 복도 라인
-    ctx.strokeStyle = "#bdc3c7";
-    ctx.strokeRect(133, 0, 1, 600); ctx.strokeRect(266, 0, 1, 600);
+    // 1. 학교 복도 배경 입체 디자인 (그라데이션 바닥)
+    let bgGrad = ctx.createLinearGradient(0, 0, 0, 650);
+    bgGrad.addColorStop(0, "#2c3e50");
+    bgGrad.addColorStop(1, "#95a5a6");
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, 400, 650);
 
-    // 캐릭터 (묶은 머리)
-    ctx.fillStyle = "#9b59b6";
-    ctx.fillRect(113 + player.lane * 133, 500, 40, 40);
-    ctx.fillStyle = "black";
-    ctx.fillText("Stage: " + player.stage, 10, 20);
+    // 복도 타일 격자선 선언 (원근감 투시선 스타일)
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(140, 0); ctx.lineTo(130, 650);
+    ctx.moveTo(260, 0); ctx.lineTo(270, 650);
+    ctx.stroke();
 
-    // 아이템
+    // 2. 아이템 그리기 (상자 탈피, 고유 명칭 및 전용 이펙트 배치)
     items.forEach(item => {
-        ctx.fillStyle = item.type === player.stage ? "#27ae60" : "#e74c3c";
-        ctx.fillRect(123 + item.lane * 133, item.y, 20, 20);
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = item.isTrap ? "#e74c3c" : "#2ecc71"; // 함정은 붉은 불빛, 진짜는 푸른 불빛
+
+        ctx.fillStyle = item.isTrap ? item.info.trapColor : item.info.color;
+        ctx.fillRect(item.x - 25, item.y, 50, 40);
+        ctx.strokeStyle = item.info.line;
+        ctx.lineWidth = 3;
+        ctx.strokeRect(item.x - 25, item.y, 50, 40);
+
+        // 아이템 텍스트 가이드
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = "#1a202c";
+        ctx.font = "bold 10px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(item.isTrap ? item.info.trap : item.info.name, item.x, item.y + 24);
     });
 
-    if(player.stage >= 5) {
-        gameRunning = false;
-        alert("등교 성공!");
+    // 3. 플레이어 캐릭터 (사복 상태 가디건/추리닝 처럼 입체 컬러링 + 묶은 머리 구현)
+    let pX = player.currentX;
+    // 몸통
+    ctx.fillStyle = player.stage > 0 ? outfitBook[player.stage - 1].color : "#718096"; // 옷 수집에 따른 실시간 변신
+    ctx.fillRect(pX - 20, 500, 40, 50);
+    if(player.stage > 0) {
+        ctx.strokeStyle = outfitBook[player.stage - 1].line;
+        ctx.lineWidth = 4;
+        ctx.strokeRect(pX - 20, 500, 40, 50);
+    }
+    // 얼굴
+    ctx.fillStyle = "#fbd38d";
+    ctx.beginPath(); ctx.arc(pX, 475, 15, 0, Math.PI * 2); ctx.fill();
+    // ★ 기획 핵심: 뛰어야 하니까 뒤로 묶은 머리(포니테일) 묘사
+    ctx.fillStyle = "#2d3748";
+    ctx.beginPath(); ctx.arc(pX, 465, 8, 0, Math.PI * 2); ctx.fill(); // 뒷머리 뭉치
+    ctx.fillRect(pX - 4, 465, 8, 20); // 아래로 축 늘어진 묶은 머리 꼬리
+
+    // 4. 복장 단속 선생님 (거리가 가까워질수록 화면 아래에서 스멀스멀 올라오는 무시무시한 연출)
+    let teacherY = 650 - (5 - teacherAlert) * 35;
+    ctx.fillStyle = "rgba(197, 48, 48, 0.85)";
+    ctx.fillRect(0, teacherY, 400, 150);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 18px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("👮‍♂️ 복장 단속 선생님 상시 추격 중! (" + teacherAlert + "m)", 200, teacherY + 40);
+
+    // 5. 상단 정보 스코어 보드 UI
+    ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+    ctx.fillRect(10, 10, 380, 75);
+    ctx.fillStyle = "#fff";
+    ctx.font = "14px sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillText("🏃‍♀️ 현재 상태: " + (player.stage === 0 ? "학칙 위반 사복 차림" : player.stage + "단계 교복 장착 중"), 20, 35);
+    ctx.fillStyle = "#f6e05e";
+    ctx.fillText("🎯 다음 타겟: " + (player.stage < 5 ? outfitBook[player.stage].name + " (" + outfitBook[player.stage].desc + ")" : "교실 골인 완료!"), 20, 55);
+    ctx.textAlign = "right";
+    ctx.fillText("SCORE: " + score, 370, 35);
+
+    // 게임오버 & 성공 스크린
+    if (isGameOver) {
+        ctx.fillStyle = "rgba(0,0,0,0.85)";
+        ctx.fillRect(0, 0, 400, 650);
+        ctx.fillStyle = "#e53e3e";
+        ctx.font = "bold 28px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("교무실행 엔딩", 200, 300);
+        ctx.fillStyle = "#fff";
+        ctx.font = "14px sans-serif";
+        ctx.fillText("사복 함정에 걸려 복장 단속에 실패했습니다.", 200, 340);
+        ctx.fillText("새로고침(F5)을 눌러 다시 등교하세요!", 200, 370);
+    }
+    if (player.stage >= 5) {
+        ctx.fillStyle = "rgba(39, 174, 96, 0.9)";
+        ctx.fillRect(0, 0, 400, 650);
+        ctx.fillStyle = "#fff";
+        ctx.font = "bold 32px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("🎉 등교 성공! 🎉", 200, 300);
+        ctx.font = "16px sans-serif";
+        ctx.fillText("완벽한 이화여고 정복을 완성했습니다!", 200, 350);
     }
 }
 
-update();
+function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+}
+loop();
 </script>
 </body>
 </html>
