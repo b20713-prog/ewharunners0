@@ -2,176 +2,198 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>이화 러너즈: 지상 최강의 등교</title>
+    <title>이화 러너즈: 하드코어 등교</title>
     <style>
         body { margin: 0; background: #0f172a; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; font-family: 'Malgun Gothic', sans-serif; overflow: hidden; }
-        #gameCanvas { border: 6px solid #1e293b; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8); border-radius: 16px; }
-        .tip { color: #64748b; margin-top: 15px; font-size: 14px; font-weight: bold; letter-spacing: 1px; }
+        #gameCanvas { border: 6px solid #1e293b; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.9); border-radius: 16px; }
+        .tip { color: #64748b; margin-top: 15px; font-size: 14px; font-weight: bold; letter-spacing: 1px; text-align: center; line-height: 1.5; }
     </style>
 </head>
 <body>
 
 <canvas id="gameCanvas" width="400" height="650"></canvas>
-<div class="tip">🎮 A / D 키 또는 좌우 방향키로 3라인을 질주하세요!</div>
+<div class="tip">
+    🎮 이동: [ A / D ] 또는 [ 좌우 방향키 ]<br>
+    🦘 점프: [ Spacebar ] 또는 [ 위쪽 방향키 (W) ]로 장애물을 넘으세요!
+</div>
 
 <script>
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 
-// 3라인 및 게임 시스템 설정
+// 3라인 및 게임 시스템 변수
 const lanes = [80, 200, 320];
-let player = { lane: 1, currentX: 200, targetX: 200, stage: 0, animFrame: 0 };
+let player = { lane: 1, currentX: 200, targetX: 200, yOffset: 0, vy: 0, isGrounded: true, stage: 0, animFrame: 0 };
 let items = [];
 let spawnTimer = 0;
 let teacherDistance = 5; // 0m 되면 게임오버
 let score = 0;
 let isGameOver = false;
 let gameTime = 0;
+let gameSpeed = 5.0; // 스코어가 오를수록 속도가 증가합니다.
 
-// 이화여고 교복 5종 및 사복 함정 디테일 스펙트럼
+const gravity = 0.6;
+
+// 수집 가이드라인 (내부 연산용 데이터, 화면 표시용 이름표는 삭제됨)
 const outfitBook = [
-    { name: "이화 블라우스", desc: "둥근 카라 & 소매 녹색 체크", trap: "사복 브이넥 흰 티" },
-    { name: "이화 체크리본", desc: "녹색+남색 고급 체크 리본", trap: "칙칙한 사복 넥타이" },
-    { name: "이화 니트조끼", desc: "진회색 + V넥 노란줄 + 꽃 로고", trap: "후아유 회색 조끼" },
-    { name: "이화 주름치마", desc: "짙은 남색 촘촘한 플리츠 스커트", trap: "사복 트레이닝 바지" },
-    { name: "이화 자켓", desc: "짙은 남색 + 반짝이는 금장단추 4개", trap: "오버핏 사복 후드집업" }
+    { color: "#FFFFFF", line: "#27ae60", trapColor: "#cbd5e1" }, // 블라우스 vs 사복티
+    { color: "#064e3b", line: "#1e3a8a", trapColor: "#991b1b" }, // 체크리본 vs 사복타이
+    { color: "#374151", line: "#f1c40f", trapColor: "#4b5563" }, // 니트조끼 vs 민무늬조끼
+    { color: "#1e1b4b", line: "#0f172a", trapColor: "#94a3b8" }, // 주름치마 vs 추리닝바지
+    { color: "#111827", line: "#fbbf24", trapColor: "#1e293b" }  // 자켓 vs 후드집업
 ];
 
+// 조작 시스템 (이동 및 점프 기능 통합)
 window.addEventListener("keydown", e => {
     if (isGameOver) return;
+    
+    // 좌우 이동
     if ((e.key === "ArrowLeft" || e.key === "a" || e.key === "A") && player.lane > 0) player.lane--;
     if ((e.key === "ArrowRight" || e.key === "d" || e.key === "D") && player.lane < 2) player.lane++;
     player.targetX = lanes[player.lane];
+
+    // 점프 조작 (서브웨이 서퍼 핵심 기믹)
+    if ((e.key === "ArrowUp" || e.key === "w" || e.key === "W" || e.key === " ") && player.isGrounded) {
+        player.vy = -11.5;
+        player.isGrounded = false;
+    }
 });
 
 function spawn() {
     if (player.stage >= 5) return;
     let rLane = Math.floor(Math.random() * 3);
-    let tLane = (rLane + Math.floor(Math.random() * 2) + 1) % 3;
-
-    items.push({ x: lanes[rLane], y: -60, lane: rLane, isTrap: false, type: player.stage, pulse: 0 });
-    if (Math.random() > 0.25) {
-        items.push({ x: lanes[tLane], y: -60, lane: tLane, isTrap: true, type: player.stage, pulse: 0 });
+    
+    // 35% 확률로 복도 장애물(청소 표지판 또는 책 더미) 생성, 65% 확률로 의류/함정 생성
+    if (Math.random() < 0.35) {
+        items.push({ x: lanes[rLane], y: -60, lane: rLane, isObstacle: true, obsType: Math.random() > 0.5 ? "sign" : "books" });
+    } else {
+        let tLane = (rLane + Math.floor(Math.random() * 2) + 1) % 3;
+        // 진짜 교복 파츠 스폰
+        items.push({ x: lanes[rLane], y: -60, lane: rLane, isTrap: false, isObstacle: false, type: player.stage, pulse: 0 });
+        // 닮은꼴 사복 함정 스폰
+        if (Math.random() > 0.25) {
+            items.push({ x: lanes[tLane], y: -60, lane: tLane, isTrap: true, isObstacle: false, type: player.stage, pulse: 0 });
+        }
     }
 }
 
 // ==========================================
-// 🎨 아이템 초정밀 디테일 그래픽 디자인 함수
+// 🎨 정밀 시각화 디테일 (텍스트 유출 및 UI 힌트 원천 차단)
 // ==========================================
-function drawBlouse(x, y, isTrap, scale) {
-    ctx.save(); ctx.translate(x, y); ctx.scale(scale, scale);
+function drawBlouse(x, y, isTrap) {
+    ctx.save(); ctx.translate(x, y);
     ctx.fillStyle = "#ffffff";
-    // 셔츠 몸통 및 주름 표현
     ctx.beginPath(); ctx.moveTo(-18, -15); ctx.lineTo(18, -15); ctx.lineTo(22, 20); ctx.lineTo(-22, 20); ctx.closePath(); ctx.fill();
-    ctx.strokeStyle = "#cbd5e1"; ctx.lineWidth = 1; ctx.stroke();
-    // 소매
-    ctx.fillRect(-28, -15, 10, 22); ctx.fillRect(18, -15, 10, 22);
+    ctx.strokeStyle = "#cbd5e1"; ctx.stroke();
+    ctx.fillRect(-27, -15, 9, 22); ctx.fillRect(18, -15, 9, 22);
     
     if (!isTrap) {
-        // [이화 고유] 정교한 둥근 카라 및 레이스 선 묘사
+        // [이화디테일] 특유의 정교한 둥근 카라 묘사
         ctx.fillStyle = "#f1f5f9";
         ctx.beginPath(); ctx.arc(-7, -13, 7, 0, Math.PI*2); ctx.arc(7, -13, 7, 0, Math.PI*2); ctx.fill();
-        ctx.strokeStyle = "#a7f3d0"; ctx.stroke();
-        // [이화 고유] 소매 끝단 리얼 초록색 체크무늬
-        ctx.fillStyle = "#064e3b"; ctx.fillRect(-28, 3, 10, 4); ctx.fillRect(18, 3, 10, 4);
-        ctx.fillStyle = "#047857"; ctx.fillRect(-25, 3, 2, 4); ctx.fillRect(21, 3, 2, 4);
+        // [이화디테일] 소매 끝단 리얼 초록색 체크무늬 매핑
+        ctx.fillStyle = "#064e3b"; ctx.fillRect(-27, 3, 9, 5); ctx.fillRect(18, 3, 9, 5);
     } else {
-        // 함정: 민무늬 사복 브이넥
+        // 함정 사복 브이넥 셔츠 조형
         ctx.fillStyle = "#e2e8f0";
-        ctx.beginPath(); ctx.moveTo(-10, -15); ctx.lineTo(0, -5); ctx.lineTo(10, -15); ctx.closePath(); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(-9, -15); ctx.lineTo(0, -4); ctx.lineTo(9, -15); ctx.closePath(); ctx.fill();
     }
     ctx.restore();
 }
 
-function drawRibbon(x, y, isTrap, scale) {
-    ctx.save(); ctx.translate(x, y); ctx.scale(scale, scale);
+function drawRibbon(x, y, isTrap) {
+    ctx.save(); ctx.translate(x, y);
     if (!isTrap) {
-        // [이화 고유] 녹색/남색 배색이 교차하는 풍성한 체크 리본
-        ctx.fillStyle = "#064e3b"; // 녹색 베이스
+        // [이화디테일] 고급스러운 녹색/남색 배색 풍성한 크로스 체크 리본
+        ctx.fillStyle = "#064e3b";
         ctx.beginPath(); ctx.moveTo(0, -2); ctx.lineTo(-22, -12); ctx.lineTo(-22, 8); ctx.closePath(); ctx.fill();
         ctx.beginPath(); ctx.moveTo(0, -2); ctx.lineTo(22, -12); ctx.lineTo(22, 8); ctx.closePath(); ctx.fill();
-        // 리본 자락 2개
-        ctx.fillRect(-14, 2, 10, 20); ctx.fillRect(4, 2, 10, 20);
-        // 남색 체크 격자선 디테일 덧칠
-        ctx.strokeStyle = "#1e3a8a"; ctx.lineWidth = 2.5;
-        ctx.strokeRect(-20, -7, 40, 10);
-        ctx.beginPath(); ctx.moveTo(-9, 2); ctx.lineTo(-9, 22); ctx.moveTo(9, 2); ctx.lineTo(9, 22); ctx.stroke();
-        // 가운데 매듭
+        ctx.fillRect(-14, 2, 9, 20); ctx.fillRect(5, 2, 9, 20);
+        ctx.strokeStyle = "#1e3a8a"; ctx.lineWidth = 2; ctx.strokeRect(-19, -7, 38, 10);
         ctx.fillStyle = "#1e1b4b"; ctx.fillRect(-4, -5, 8, 8);
     } else {
-        // 함정: 일반 아저씨 사복 붉은색 타이
+        // 함정 사복 붉은색 일자 타이
         ctx.fillStyle = "#991b1b";
         ctx.beginPath(); ctx.moveTo(-5, -15); ctx.lineTo(5, -15); ctx.lineTo(7, 10); ctx.lineTo(0, 22); ctx.lineTo(-7, 10); ctx.closePath(); ctx.fill();
     }
     ctx.restore();
 }
 
-function drawVest(x, y, isTrap, scale) {
-    ctx.save(); ctx.translate(x, y); ctx.scale(scale, scale);
-    ctx.fillStyle = "#374151"; // 고급스러운 진회색 니트 원단 색상
+function drawVest(x, y, isTrap) {
+    ctx.save(); ctx.translate(x, y);
+    ctx.fillStyle = "#374151"; // 이화여고 진회색 조끼 원단
     ctx.fillRect(-20, -15, 40, 38);
-    // 암홀 커팅
-    ctx.fillStyle = "#475569"; ctx.fillRect(-20, -15, 5, 15); ctx.fillRect(15, -15, 5, 15);
+    ctx.fillStyle = "#475569"; ctx.fillRect(-20, -15, 5, 14); ctx.fillRect(15, -15, 5, 14);
     
     if (!isTrap) {
-        // [이화 고유] 브이넥 라인의 선명한 노란색 스트라이프 선
-        ctx.strokeStyle = "#f1c40f"; ctx.lineWidth = 2.5;
+        // [이화디테일] 브이넥 테두리의 황금색 얇은 스트라이프 선
+        ctx.strokeStyle = "#f1c40f"; ctx.lineWidth = 2;
         ctx.beginPath(); ctx.moveTo(-10, -15); ctx.lineTo(0, -3); ctx.lineTo(10, -15); ctx.stroke();
-        // [이화 고유] 좌측 가슴 정밀 꽃 모양 엠블럼 로고
-        ctx.fillStyle = "#10b981"; ctx.beginPath(); ctx.arc(-8, -2, 4.5, 0, Math.PI*2); ctx.fill(); // 나뭇잎 배경
-        ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.arc(-8, -2, 2.5, 0, Math.PI*2); ctx.fill(); // 꽃잎
-        ctx.fillStyle = "#fbbf24"; ctx.beginPath(); ctx.arc(-8, -2, 1, 0, Math.PI*2); ctx.fill();  // 수술
-    } else {
-        // 함정: 로고 없는 밋밋한 보급형 사복 조끼
-        ctx.strokeStyle = "#94a3b8"; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.moveTo(-12, -15); ctx.lineTo(0, -8); ctx.lineTo(12, -15); ctx.stroke();
+        // [이화디테일] 가슴팍의 초록색 정밀 꽃 문양 마크 (학교 마크 엠블럼)
+        ctx.fillStyle = "#10b981"; ctx.beginPath(); ctx.arc(-8, -2, 4.5, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = "#fbbf24"; ctx.beginPath(); ctx.arc(-8, -2, 1.5, 0, Math.PI*2); ctx.fill();
     }
     ctx.restore();
 }
 
-function drawSkirt(x, y, isTrap, scale) {
-    ctx.save(); ctx.translate(x, y); ctx.scale(scale, scale);
+function drawSkirt(x, y, isTrap) {
+    ctx.save(); ctx.translate(x, y);
     if (!isTrap) {
-        // [이화 고유] 정갈하고 묵직한 진남색 플리츠 주름치마
+        // [이화디테일] 진남색 촘촘한 주름 플리츠스커트 조형
         ctx.fillStyle = "#1e1b4b";
-        ctx.beginPath(); ctx.moveTo(-16, -15); ctx.lineTo(16, -15); ctx.lineTo(24, 22); ctx.lineTo(-24, 22); ctx.closePath(); ctx.fill();
-        // 하이퍼리얼 주름 그림자 명암선 묘사
-        ctx.strokeStyle = "#0f172a"; ctx.lineWidth = 1.8;
+        ctx.beginPath(); ctx.moveTo(-17, -15); ctx.lineTo(17, -15); ctx.lineTo(25, 22); ctx.lineTo(-24, 22); ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = "#0f172a"; ctx.lineWidth = 1.5;
         for (let i = -12; i <= 12; i += 4) {
-            ctx.beginPath(); ctx.moveTo(i, -15); ctx.lineTo(i * 1.4, 22); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(i, -15); ctx.lineTo(i * 1.3, 22); ctx.stroke();
         }
     } else {
-        // 함정: 학교에 절대 입고 오면 안 되는 펑퍼짐한 사복 회색 츄리닝 바지
+        // 함정 사복 헐렁한 회색 추리닝 바지
         ctx.fillStyle = "#94a3b8";
-        ctx.fillRect(-18, -15, 16, 38); ctx.fillRect(2, -15, 16, 38);
-        ctx.fillStyle = "#cbd5e1"; ctx.fillRect(-18, -15, 36, 4); // 고무줄 밴드
+        ctx.fillRect(-17, -15, 15, 38); ctx.fillRect(2, -15, 15, 38);
     }
     ctx.restore();
 }
 
-function drawJacket(x, y, isTrap, scale) {
-    ctx.save(); ctx.translate(x, y); ctx.scale(scale, scale);
-    ctx.fillStyle = isTrap ? "#1e293b" : "#0f172a"; // 사복 남색 잠바 vs 리얼 짙은 남색 교복 마이
+function drawJacket(x, y, isTrap) {
+    ctx.save(); ctx.translate(x, y);
+    ctx.fillStyle = isTrap ? "#1e293b" : "#0f172a"; // 겉보기엔 똑같은 남색 아우터
     ctx.fillRect(-22, -18, 44, 42);
-    // 칼라 및 앞트임 선 디테일
     ctx.strokeStyle = "#334155"; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(0, -18); ctx.lineTo(0, 10); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(-22, -8); ctx.lineTo(0, 2); ctx.lineTo(22, -8); ctx.stroke();
     
     if (!isTrap) {
-        // [이화 고유] 전면부를 장식하는 영롱한 황금빛 금장 단추 4개 코딩
+        // [이화디테일] 전면부의 리얼한 금장 단추 4개 배치
         ctx.fillStyle = "#fbbf24";
-        ctx.shadowBlur = 4; ctx.shadowColor = "#f59e0b";
         ctx.beginPath(); 
-        ctx.arc(-8, -3, 3, 0, Math.PI*2); ctx.arc(8, -3, 3, 0, Math.PI*2);
-        ctx.arc(-8, 10, 3, 0, Math.PI*2); ctx.arc(8, 10, 3, 0, Math.PI*2);
+        ctx.arc(-8, -3, 2.5, 0, Math.PI*2); ctx.arc(8, -3, 2.5, 0, Math.PI*2);
+        ctx.arc(-8, 9, 2.5, 0, Math.PI*2); ctx.arc(8, 9, 2.5, 0, Math.PI*2);
         ctx.fill();
-        // 양측 주머니 덮개 선
-        ctx.strokeStyle = "#1e293b"; ctx.strokeRect(-18, 14, 12, 5); ctx.strokeRect(6, 14, 12, 5);
     } else {
-        // 함정: 후드가 달려있는 사복 아우터
+        // 함정 사복 후드 파츠 부착 구조
         ctx.fillStyle = "#334155";
-        ctx.beginPath(); ctx.arc(0, -18, 12, 0, Math.PI, true); ctx.fill();
+        ctx.beginPath(); ctx.arc(0, -18, 11, 0, Math.PI, true); ctx.fill();
+    }
+    ctx.restore();
+}
+
+// [신규 추가] 서브웨이 서퍼형 복도 장애물 렌더링
+function drawObstacle(x, y, obsType) {
+    ctx.save(); ctx.translate(x, y);
+    if (obsType === "sign") {
+        // '청소 중 미끄럼 주의' A형 노란색 삼각 표지판
+        ctx.fillStyle = "#f59e0b";
+        ctx.beginPath(); ctx.moveTo(0, -25); ctx.lineTo(-18, 20); ctx.lineTo(18, 20); ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = "#d97706"; ctx.lineWidth = 2; ctx.stroke();
+        // 안쪽 경고 마크
+        ctx.fillStyle = "#000000"; ctx.font = "bold 14px sans-serif"; ctx.textAlign = "center";
+        ctx.fillText("⚠️", 0, 12);
+    } else {
+        // 복도에 쏟아진 무거운 서적/프린트 더미 장애물
+        ctx.fillStyle = "#b91c1c"; ctx.fillRect(-22, 5, 44, 15);
+        ctx.fillStyle = "#3b82f6"; ctx.fillRect(-18, -5, 36, 13);
+        ctx.fillStyle = "#10b981"; ctx.fillRect(-20, -12, 40, 10);
+        ctx.fillStyle = "#ffffff"; ctx.fillRect(-15, -12, 30, 2);
     }
     ctx.restore();
 }
@@ -180,28 +202,51 @@ function update() {
     if (isGameOver) return;
     gameTime++;
 
-    // 서브웨이 서퍼 특유의 부드럽고 찰진 라인 이동 물리 엔진
-    player.currentX += (player.targetX - player.currentX) * 0.23;
-    player.animFrame += 0.15; // 묶은 머리 흔들림용 애니메이션 프레임
+    // 스코어 비례 속도 자동 증가 연출 (난이도 자동 상향 엔진)
+    gameSpeed = 5.0 + (score / 1500);
+
+    // 부드러운 라인 횡이동 물리 연산
+    player.currentX += (player.targetX - player.currentX) * 0.24;
+    player.animFrame += 0.16;
+
+    // 점프 물리 법칙 적용 계산
+    if (!player.isGrounded) {
+        player.yOffset += player.vy;
+        player.vy += gravity;
+        if (player.yOffset >= 0) {
+            player.yOffset = 0;
+            player.vy = 0;
+            player.isGrounded = true;
+        }
+    }
 
     spawnTimer++;
-    if (spawnTimer > 70) { spawn(); spawnTimer = 0; }
+    if (spawnTimer > Math.max(45, 75 - (score / 400))) { spawn(); spawnTimer = 0; }
 
     for (let i = items.length - 1; i >= 0; i--) {
-        items[i].y += 4.8; // 질주 속도
-        items[i].pulse += 0.05; // 아이템 공중 둥둥 애니메이션 계산
+        items[i].y += gameSpeed;
 
-        // 정확한 충돌 판정 체계 (자석 효과 철저히 배제)
+        // 충돌 단면적 체크
         if (items[i].y > 480 && items[i].y < 540 && items[i].lane === player.lane) {
-            if (!items[i].isTrap) {
-                player.stage++;
-                score += 200;
-                teacherDistance = Math.min(5, teacherDistance + 1); // 리얼 교복 획득 시 따돌림 성공
+            if (items[i].isObstacle) {
+                // [장애물 충돌 조건]: 플레이어가 바닥에 있을 때만 충돌 (점프 시 공중 패스 가능!)
+                if (player.yOffset > -20) {
+                    teacherDistance -= 1.5; // 장애물 부딪히면 넉백 및 선생님 급접근
+                    score = Math.max(0, score - 100);
+                    items.splice(i, 1);
+                }
             } else {
-                if (player.stage > 0) player.stage--; // 사복 함정 페널티 1: 옷 벗겨짐
-                teacherDistance -= 2; // 페널티 2: 선생님이 전속력으로 등 뒤 돌진
+                // [의류 아이템 충돌 조건]: 공중/바닥 상관없이 자석 없이 직접 부딪히면 획득
+                if (!items[i].isTrap) {
+                    player.stage++;
+                    score += 250;
+                    teacherDistance = Math.min(5, teacherDistance + 1);
+                } else {
+                    if (player.stage > 0) player.stage--; // 사복 먹으면 입던 옷 게이지 차감
+                    teacherDistance -= 2.0;
+                }
+                items.splice(i, 1);
             }
-            items.splice(i, 1);
             continue;
         }
         if (items[i].y > 660) items.splice(i, 1);
@@ -214,128 +259,116 @@ function draw() {
     ctx.clearRect(0, 0, 400, 650);
 
     // ==========================================
-    // 🏢 1. 학교 복도 배경 초정밀 원근 투시 렌더링
+    // 🏢 1. 학교 복도 테마 원근 투시 아트워크 디자인
     // ==========================================
-    // 양쪽 벽면 (초록색 페인트칠 된 전형적인 학교 복도 벽)
     ctx.fillStyle = "#1e293b"; ctx.fillRect(0, 0, 400, 650);
-    ctx.fillStyle = "#022c22"; ctx.fillRect(0, 0, 90, 650); ctx.fillRect(310, 0, 90, 650);
+    ctx.fillStyle = "#022c22"; ctx.fillRect(0, 0, 90, 650); ctx.fillRect(310, 0, 90, 650); // 녹색 학교 벽면 색감
     
-    // 복도 바닥 (원근 그라데이션이 들어간 고급스러운 왁스 타일 바닥)
     let floorGrad = ctx.createLinearGradient(0, 180, 0, 650);
     floorGrad.addColorStop(0, "#334155"); floorGrad.addColorStop(1, "#94a3b8");
-    ctx.fillStyle = floorGrad; ctx.fillRect(90, 180, 220, 470);
+    ctx.fillStyle = floorGrad; ctx.fillRect(90, 180, 220, 470); // 바닥 반사광 타일 효과
 
-    // [디테일 추가] 양측 벽면에 배치된 '반반 사물함' 및 '교실 창문' 라인
+    // 벽면 사물함 & 조명 원근 라인 배치
     ctx.fillStyle = "#475569";
-    for(let y = 180; y < 650; y += 80) {
-        ctx.fillRect(5, y, 20, 60); // 왼쪽 교실 사물함들
-        ctx.fillRect(375, y, 20, 60); // 오른쪽 교실 사물함들
+    for(let y = 180; y < 650; y += 75) {
+        ctx.fillRect(6, y, 18, 55); ctx.fillRect(376, y, 18, 55);
     }
 
-    // 서브웨이 서퍼 시그니처: 지평선에서 뻗어나오는 3라인 투시 궤적 선
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.25)"; ctx.lineWidth = 5;
+    // 3라인 가이드 투시 궤적 트랙선
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.2)"; ctx.lineWidth = 4;
     ctx.beginPath();
     ctx.moveTo(135, 180); ctx.lineTo(110, 650);
     ctx.moveTo(265, 180); ctx.lineTo(290, 650);
     ctx.stroke();
 
     // ==========================================
-    // 💎 2. 스폰된 교복 및 사복 함정 아이템 그리기
+    // 💎 2. 드롭 아이템 & 장애물 그리기 (가이드 UI 흔적 전면 소멸)
     // ==========================================
     items.forEach(item => {
-        let sizeScale = 1 + Math.sin(item.pulse) * 0.08; // 공중에서 둥둥 떠다니는 리얼 런게임 연출
-        
-        if (item.type === 0) drawBlouse(item.x, item.y, item.isTrap, sizeScale);
-        else if (item.type === 1) drawRibbon(item.x, item.y, item.isTrap, sizeScale);
-        else if (item.type === 2) drawVest(item.x, item.y, item.isTrap, sizeScale);
-        else if (item.type === 3) drawSkirt(item.x, item.y, item.isTrap, sizeScale);
-        else if (item.type === 4) drawJacket(item.x, item.y, item.isTrap, sizeScale);
-
-        // 네온 라이팅 이펙트 (진짜는 초록 오라, 가짜 사복 함정은 붉은 경고 오라)
-        ctx.shadowBlur = 20; ctx.shadowColor = item.isTrap ? "#ef4444" : "#10b981";
-        ctx.strokeStyle = item.isTrap ? "#ef4444" : "#10b981"; ctx.lineWidth = 2;
-        ctx.strokeRect(item.x-28, item.y-22, 56, 44);
-        ctx.shadowBlur = 0;
-
-        // 아이템 가이드 태그 팝업
-        ctx.fillStyle = "rgba(15, 23, 42, 0.75)"; ctx.fillRect(item.x - 35, item.y - 42, 70, 16);
-        ctx.fillStyle = "#ffffff"; ctx.font = "9px sans-serif"; ctx.textAlign = "center";
-        ctx.fillText(item.isTrap ? outfitBook[item.type].trap : outfitBook[item.type].name, item.x, item.y - 31);
+        if (item.isObstacle) {
+            drawObstacle(item.x, item.y, item.obsType);
+        } else {
+            // ★ 피드백 반영: 먹어도 되는지 표시하던 빨간색/초록색 네모 상자와 이름 텍스트 안내를 영구 제거했습니다.
+            // 플레이어는 오직 순수한 외형적 고유 디자인으로만 식별해야 합니다.
+            if (item.type === 0) drawBlouse(item.x, item.y, item.isTrap);
+            else if (item.type === 1) drawRibbon(item.x, item.y, item.isTrap);
+            else if (item.type === 2) drawVest(item.x, item.y, item.isTrap);
+            else if (item.type === 3) drawSkirt(item.x, item.y, item.isTrap);
+            else if (item.type === 4) drawJacket(item.x, item.y, item.isTrap);
+        }
     });
 
     // ==========================================
-    // 🏃‍♀️ 3. 플레이어 캐릭터 (사복 스타트 -> 실시간 환복)
+    // 🏃‍♀️ 3. 플레이어 캐릭터 (포니테일 흔들림 애니메이션 + 점프 Y축 연동)
     // ==========================================
     let pX = player.currentX;
+    let pY = 500 + player.yOffset; // 점프 시 공중으로 도약하는 좌표계 구조
     
-    // 묶은 머리(포니테일) 좌우 도트 애니메이션 계산
     let hairSway = Math.sin(player.animFrame) * 6;
 
-    ctx.fillStyle = "#fed7aa"; ctx.beginPath(); ctx.arc(pX, 465, 14, 0, Math.PI*2); ctx.fill(); // 학생 얼굴
+    ctx.fillStyle = "#fed7aa"; ctx.beginPath(); ctx.arc(pX, pY - 35, 14, 0, Math.PI*2); ctx.fill(); // 두상
     
-    // ★ [기획 핵심 사항] 뛰어야 하니까 뒤로 야무지게 묶은 머리 리얼 묘사
-    ctx.fillStyle = "#1e293b"; 
-    ctx.beginPath(); ctx.arc(pX, 456, 6, 0, Math.PI*2); ctx.fill(); // 머리 끈 매듭
-    ctx.beginPath(); // 달릴 때 좌우로 리드미컬하게 흔들리는 포니테일 자락
-    ctx.moveTo(pX, 456); ctx.quadraticCurveTo(pX + hairSway, 475, pX + hairSway * 1.2, 490);
-    ctx.lineTo(pX - 4, 456); ctx.closePath(); ctx.fillStyle = "#334155"; ctx.fill();
+    // 이화여고 질주 전용 뒤로 묶은 머리(포니테일 꼬리) 그래픽 묘사
+    ctx.fillStyle = "#1e293b"; ctx.beginPath(); ctx.arc(pX, pY - 42, 6, 0, Math.PI*2); ctx.fill(); 
+    ctx.beginPath(); ctx.moveTo(pX, pY - 42); ctx.quadraticCurveTo(pX + hairSway, pY - 23, pX + hairSway * 1.3, pY - 8);
+    ctx.lineTo(pX - 4, pY - 42); ctx.closePath(); ctx.fillStyle = "#334155"; ctx.fill();
 
-    // 플레이어 의복 상태 레이어드 엔진
+    // 실시간 누적식 교복 파츠 아바타 셋업 구조
     if (player.stage === 0) {
-        ctx.fillStyle = "#cbd5e1"; ctx.fillRect(pX-15, 485, 30, 40); // 기본 사복 티셔츠룩
-        ctx.fillStyle = "#475569"; ctx.fillRect(pX-13, 525, 26, 25); // 사복 트레이닝 바지
+        ctx.fillStyle = "#cbd5e1"; ctx.fillRect(pX-15, pY-15, 30, 40); // 0단계 위반 사복 티
+        ctx.fillStyle = "#475569"; ctx.fillRect(pX-13, pY+25, 26, 25); // 사복 바지
     } else {
-        if (player.stage >= 1) { ctx.fillStyle = "#ffffff"; ctx.fillRect(pX-15, 485, 30, 40); } // 블라우스 장착
-        if (player.stage >= 2) { ctx.fillStyle = "#064e3b"; ctx.beginPath(); ctx.arc(pX, 493, 5, 0, Math.PI*2); ctx.fill(); } // 체크 리본 장착
-        if (player.stage >= 3) { ctx.fillStyle = "#374151"; ctx.fillRect(pX-15, 490, 30, 35); } // 니트 조끼 레이어드
-        if (player.stage >= 4) { ctx.fillStyle = "#1e1b4b"; ctx.fillRect(pX-17, 525, 34, 22); } // 주름치마 환복 완료
-        if (player.stage >= 5) { ctx.fillStyle = "#0f172a"; ctx.fillRect(pX-17, 485, 34, 42); } // 완벽한 자켓 정복 변신!
+        if (player.stage >= 1) { ctx.fillStyle = "#ffffff"; ctx.fillRect(pX-15, pY-15, 30, 40); } // 블라우스
+        if (player.stage >= 2) { ctx.fillStyle = "#064e3b"; ctx.beginPath(); ctx.arc(pX, pY-7, 5, 0, Math.PI*2); ctx.fill(); } // 크로스 리본
+        if (player.stage >= 3) { ctx.fillStyle = "#374151"; ctx.fillRect(pX-15, pY-10, 30, 35); } // 니트 조끼
+        if (player.stage >= 4) { ctx.fillStyle = "#1e1b4b"; ctx.fillRect(pX-17, pY+25, 34, 22); } // 남색 치마
+        if (player.stage >= 5) { ctx.fillStyle = "#0f172a"; ctx.fillRect(pX-17, pY-15, 34, 42); } // 최종 자켓마이 완료
     }
 
     // ==========================================
-    // 👮‍♂️ 4. 복장 단속 선생님 (무시무시한 상시 추격 연출)
+    // 👮‍♂️ 4. 복장 단속 선생님 추격 메커니즘 연출
     // ==========================================
     let teacherY = 650 - (5 - teacherDistance) * 35;
-    ctx.fillStyle = "rgba(185, 28, 28, 0.88)"; // 분노의 레드 컬러 오라
+    ctx.fillStyle = "rgba(220, 38, 38, 0.9)"; // 거리가 좁혀질수록 다가오는 압박의 붉은 구역
     ctx.fillRect(0, teacherY, 400, 150);
     
-    // 선생님 호루라기 소리 시각화 이펙트 ("정지!!! 📣")
-    if (teacherDistance <= 3 && Math.floor(gameTime / 10) % 2 === 0) {
-        ctx.fillStyle = "#fde047"; ctx.font = "bold 20px sans-serif";
-        ctx.fillText("거기 서!!! 📣", pX, teacherY - 15);
+    // 위급 단속 사운드 시각화 연출 ("호루라기 소리 📣")
+    if (teacherDistance <= 3 && Math.floor(gameTime / 8) % 2 === 0) {
+        ctx.fillStyle = "#fde047"; ctx.font = "bold 21px sans-serif"; ctx.textAlign = "center";
+        ctx.fillText("삐이익-! 거기 서! 📣", pX, teacherY - 20);
     }
     ctx.fillStyle = "#ffffff"; ctx.font = "bold 14px sans-serif"; ctx.textAlign = "center";
-    ctx.fillText("👮‍♂️ 복장 단속 선생님 경고 구역 (거리: " + teacherDistance + "m)", 200, teacherY + 35);
+    ctx.fillText("👮‍♂️ 복장 단속 선생님 상시 단속 구역 (추격 거리: " + teacherDistance.toFixed(1) + "m)", 200, teacherY + 35);
 
     // ==========================================
-    // 📊 5. 탑 대시보드 스코어 정보창 UI
+    // 📊 5. 메인 스코어 대시보드 인터페이스
     // ==========================================
-    ctx.fillStyle = "rgba(15, 23, 42, 0.9)"; ctx.fillRect(10, 10, 380, 80);
+    ctx.fillStyle = "rgba(15, 23, 42, 0.93)"; ctx.fillRect(10, 10, 380, 80);
     ctx.strokeStyle = "#334155"; ctx.lineWidth = 2; ctx.strokeRect(10, 10, 380, 80);
     
     ctx.fillStyle = "#fff"; ctx.font = "bold 12px sans-serif"; ctx.textAlign = "left";
-    ctx.fillText("🏃‍♀️ 묶은 머리 학생: " + (player.stage === 0 ? "복장 불량 사복 등교 중" : player.stage + "단계 교복 셋업 완료"), 25, 35);
+    ctx.fillText("🏃‍♀️ 상태: " + (player.stage === 0 ? "사복 등교 (단속 타겟 1호)" : player.stage + "단계 이화정복 착용 중"), 25, 35);
     ctx.fillStyle = "#fde047";
-    ctx.fillText("🎯 다음 획득 타겟: " + (player.stage < 5 ? outfitBook[player.stage].name + " [" + outfitBook[player.stage].desc + "]" : "교실 세이프!"), 25, 58);
+    ctx.fillText("🎯 현재 미션 단계: " + (player.stage < 5 ? (player.stage + 1) + "번째 교복 파츠를 직접 식별해 획득하세요!" : "등교 성공!"), 25, 58);
     ctx.textAlign = "right"; ctx.fillStyle = "#4ade80"; ctx.font = "bold 16px monospace";
     ctx.fillText("SCORE: " + score, 375, 45);
 
-    // 게임 종료 및 등교 성공 컷씬 화면
+    // 게임 엔딩 스크린 연출
     if (isGameOver) {
-        ctx.fillStyle = "rgba(0,0,0,0.92)"; ctx.fillRect(0, 0, 400, 650);
-        ctx.fillStyle = "#ef4444"; ctx.font = "bold 28px sans-serif"; ctx.textAlign = "center";
-        ctx.fillText("🚨 교무실행 엔딩 🚨", 200, 290);
+        ctx.fillStyle = "rgba(0,0,0,0.95)"; ctx.fillRect(0, 0, 400, 650);
+        ctx.fillStyle = "#ef4444"; ctx.font = "bold 26px sans-serif"; ctx.textAlign = "center";
+        ctx.fillText("🚨 교무실행 반성문 엔딩 🚨", 200, 290);
         ctx.fillStyle = "#ffffff"; ctx.font = "14px sans-serif";
-        ctx.fillText("사복 함정에 걸려 선생님께 붙잡혔습니다.", 200, 335);
+        ctx.fillText("사복 함정에 속거나 복도 장애물에 걸려 붙잡혔습니다.", 200, 335);
         ctx.fillStyle = "#94a3b8"; ctx.fillText("다시 등교하려면 키보드 F5를 누르세요!", 200, 370);
     }
     if (player.stage >= 5) {
         ctx.fillStyle = "rgba(4, 120, 87, 0.96)"; ctx.fillRect(0, 0, 400, 650);
         ctx.fillStyle = "#ffffff"; ctx.font = "bold 32px sans-serif"; ctx.textAlign = "center";
-        ctx.fillText("🎉 등교 성공! 🎉", 200, 290);
+        ctx.fillText("🎉 복장 단속 완전 돌파 성공! 🎉", 200, 290);
         ctx.font = "15px sans-serif"; ctx.fillStyle = "#a7f3d0";
-        ctx.fillText("완벽한 이화여고 정복 세트를 갖춰 입고", 200, 335);
-        ctx.fillText("선생님을 따돌린 뒤 교실 무사 골인!", 200, 360);
+        ctx.fillText("단속 레이더를 교묘히 피해 완벽한 교복 셋업을 완료하고", 200, 335);
+        ctx.fillText("무사히 교실 세이프인에 성공했습니다!", 200, 360);
     }
 }
 
