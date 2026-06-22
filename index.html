@@ -2,28 +2,31 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>이화 러너즈: 마스터피스 완결판</title>
+    <title>이화 러너즈: 3D 원작 초월판</title>
     <style>
-        body { margin: 0; background: #0b0f19; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; font-family: 'Malgun Gothic', sans-serif; overflow: hidden; }
-        #gameCanvas { border: 4px solid #10b981; box-shadow: 0 0 40px rgba(16, 185, 129, 0.5); border-radius: 24px; }
-        .tip { color: #475569; margin-top: 15px; font-size: 14px; font-weight: bold; letter-spacing: 1px; text-align: center; line-height: 1.6; }
+        body { margin: 0; background: #090d16; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; font-family: 'Malgun Gothic', sans-serif; overflow: hidden; }
+        #gameCanvas { border: 4px solid #10b981; box-shadow: 0 0 50px rgba(16, 185, 129, 0.4); border-radius: 24px; }
+        .tip { color: #64748b; margin-top: 15px; font-size: 14px; font-weight: bold; text-align: center; line-height: 1.6; }
     </style>
 </head>
 <body>
 
-<canvas id="gameCanvas" width="450" height="700"></canvas>
+<canvas id="gameCanvas" width="460" height="700"></canvas>
 <div class="tip">
-    🏫 세은, 서진, 하은 기획 [이화 러너즈 최종 완결판] 🏫<br>
-    🎮 [ A / D ] 이동 | [ Spacebar / W ] 점프 (장애물을 초고공 점프로 찰지게 뛰어넘으세요!)
+    🏫 세은·서진·하은 기획 [3D 이화 러너즈 마스터피스] 🏫<br>
+    🎮 [ A / D ] 또는 [좌우 방향키] 라인 이동 | [ Spacebar / W ] 초고공 점프!
 </div>
 
 <script>
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 
-// 3라인 및 완벽 보정된 물리 엔진 변수
-const lanes = [90, 225, 360];
-let player = { lane: 1, currentX: 225, targetX: 225, yOffset: 0, vy: 0, isGrounded: true, stage: 0, animFrame: 0 };
+// 3D 소실점(Vanishing Point) 및 가상 3D 공간 제어 변수
+const vanishX = 230;
+const vanishY = 220;
+const playerY = 580;
+
+let player = { lane: 1, currentLaneX: 0, targetLaneX: 0, yOffset: 0, vy: 0, isGrounded: true, stage: 0, animFrame: 0 };
 let items = [];
 let spawnTimer = 0;
 let teacherDistance = 5.0; 
@@ -31,34 +34,32 @@ let score = 0;
 let isGameOver = false;
 let gameTime = 0;
 
-// 🔄 3단계 라운드 및 자동 속도 가속 시스템
+// 🔄 라운드 시스템 및 인게임 배너용 변수 (버그 원천 수정)
 let currentRound = 1; 
-let baseSpeed = 5.5;
-let gameSpeed = 5.5;
-const gravity = 0.7; // 점프 낙하 물리 상수
+let baseSpeed = 0.012; // 3D progress 증가 스피드
+let gameSpeed = 0.012;
+let roundMessage = "ROUND 1: 아침 등교길 복도";
+let roundMessageTimer = 120; // alert() 대신 화면에 자연스럽게 흐르는 배너 방식 채택
 
-// 고급스러운 2D 벡터 스타일을 위한 슬림하고 정교한 윤곽선 세팅
-const outlineColor = "#1e293b";
-const outlineWidth = 1.5;
+const gravity = 0.75;
 
+// 이화여고 교복 5종 데이터 고대비 리매핑
 const outfitBook = [
-    { name: "블라우스", color: "#FFFFFF", accent: "#10b981", shade: "#f1f5f9" },
-    { name: "체크리본", color: "#064e3b", accent: "#2563eb", shade: "#043d2c" },
-    { name: "니트조끼", color: "#4b5563", accent: "#fbbf24", shade: "#374151" },
-    { name: "주름치마", color: "#1e1b4b", accent: "#4338ca", shade: "#0f0e26" },
-    { name: "자켓마이", color: "#0f172a", accent: "#fbbf24", shade: "#020617" }
+    { name: "블라우스", color: "#FFFFFF", accent: "#10b981" },
+    { name: "체크리본", color: "#064e3b", accent: "#2563eb" },
+    { name: "니트조끼", color: "#4b5563", accent: "#fbbf24" },
+    { name: "주름치마", color: "#1e1b4b", accent: "#4338ca" },
+    { name: "자켓마이", color: "#0f172a", accent: "#fbbf24" }
 ];
 
 window.addEventListener("keydown", e => {
     if (isGameOver) return;
-    
     if ((e.key === "ArrowLeft" || e.key === "a" || e.key === "A") && player.lane > 0) player.lane--;
     if ((e.key === "ArrowRight" || e.key === "d" || e.key === "D") && player.lane < 2) player.lane++;
-    player.targetX = lanes[player.lane];
-
-    // [버그 수정] 점프 판정 및 역동적 도약 높이 셋업
+    
+    // 점프 커맨드 처리
     if ((e.key === "ArrowUp" || e.key === "w" || e.key === "W" || e.key === " ") && player.isGrounded) {
-        player.vy = -14.0;
+        player.vy = -14.5;
         player.isGrounded = false;
     }
 });
@@ -67,140 +68,120 @@ function spawn() {
     if (isGameOver || player.stage >= 5) return;
     let rLane = Math.floor(Math.random() * 3);
     
-    // 라운드가 올라갈수록 장애물 스폰 밀도가 빽빽하게 폭증 (최대 55%)
-    let obstacleChance = 0.35 + (currentRound * 0.1); 
+    // 라운드가 오를수록 장애물 스폰 밀도 대폭 상향 (최대 60%)
+    let obstacleChance = 0.38 + (currentRound * 0.08); 
     
     if (Math.random() < obstacleChance) {
         let obsTypes = ["giant_cart", "stacked_desks", "high_hurdle"];
-        items.push({ x: lanes[rLane], y: -80, lane: rLane, isObstacle: true, obsType: obsTypes[Math.floor(Math.random() * obsTypes.length)], processed: false });
+        items.push({ lane: rLane, progress: 0, isObstacle: true, obsType: obsTypes[Math.floor(Math.random() * obsTypes.length)] });
     } else {
         let tLane = (rLane + Math.floor(Math.random() * 2) + 1) % 3;
-        items.push({ x: lanes[rLane], y: -80, lane: rLane, isTrap: false, isObstacle: false, type: player.stage, pulse: 0, processed: false });
+        items.push({ lane: rLane, progress: 0, isTrap: false, isObstacle: false, type: player.stage });
         if (Math.random() > 0.15) { 
-            items.push({ x: lanes[tLane], y: -80, lane: tLane, isTrap: true, isObstacle: false, type: player.stage, pulse: 0, processed: false });
+            items.push({ lane: tLane, progress: 0, isTrap: true, isObstacle: false, type: player.stage });
         }
     }
 }
 
 // ==========================================
-// 🎨 [디테일 대폭 상승] 상단 광원 입체 명암 및 슬림 윤곽선 그래픽 함수
+// 🎨 3D 투시 투영 계산 및 세련된 그래픽 렌더링
 // ==========================================
-function applyPremiumStyle(ctx, baseColor, shadeColor) {
-    ctx.strokeStyle = outlineColor;
-    ctx.lineWidth = outlineWidth;
-    let grad = ctx.createLinearGradient(0, -20, 0, 20);
-    grad.addColorStop(0, baseColor);
-    grad.addColorStop(1, shadeColor);
-    ctx.fillStyle = grad;
+function get3DPosition(lane, progress) {
+    // 소실점으로부터 원근법에 의해 퍼져나가는 x 좌표 계산
+    let targetLaneX = (lane - 1) * 145; 
+    let screenX = vanishX + targetLaneX * progress;
+    let screenY = vanishY + (playerY - vanishY) * progress;
+    let scale = progress * 1.3; // 멀어질수록 작고, 가까워질수록 거대해짐
+    return { x: screenX, y: screenY, scale: scale };
 }
 
-function drawBlouse(x, y, isTrap) {
-    ctx.save(); ctx.translate(x, y);
-    applyPremiumStyle(ctx, "#ffffff", "#f1f5f9");
+function drawBlouse(x, y, isTrap, scale) {
+    ctx.save(); ctx.translate(x, y); ctx.scale(scale, scale);
+    ctx.strokeStyle = "#1e293b"; ctx.lineWidth = 1.2; ctx.fillStyle = "#ffffff";
     ctx.beginPath(); ctx.moveTo(-18, -15); ctx.lineTo(18, -15); ctx.lineTo(22, 20); ctx.lineTo(-22, 20); ctx.closePath(); ctx.fill(); ctx.stroke();
     ctx.fillRect(-27, -15, 9, 22); ctx.fillRect(18, -15, 9, 22);
     ctx.strokeRect(-27, -15, 9, 22); ctx.strokeRect(18, -15, 9, 22);
-    
     if (!isTrap) {
-        // [이화 고유] 슬림하고 선명한 둥근 카라 명암
-        ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.arc(-7, -13, 6, 0, Math.PI*2); ctx.arc(7, -13, 6, 0, Math.PI*2); ctx.fill(); ctx.stroke();
-        ctx.fillStyle = "#064e3b"; ctx.fillRect(-27, 4, 9, 5); ctx.fillRect(18, 4, 9, 5); // 녹색 소매 체크
+        ctx.fillStyle = "#064e3b"; ctx.fillRect(-27, 4, 9, 5); ctx.fillRect(18, 4, 9, 5); // 소매 체크
+        ctx.fillStyle = "#f8fafc"; ctx.beginPath(); ctx.arc(-7, -13, 6, 0, Math.PI*2); ctx.arc(7, -13, 6, 0, Math.PI*2); ctx.fill(); ctx.stroke();
     } else {
-        ctx.fillStyle = "#e2e8f0"; ctx.beginPath(); ctx.moveTo(-8, -15); ctx.lineTo(0, -3); ctx.lineTo(8, -15); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = "#cbd5e1"; ctx.beginPath(); ctx.moveTo(-8, -15); ctx.lineTo(0, -3); ctx.lineTo(8, -15); ctx.closePath(); ctx.fill();
     }
     ctx.restore();
 }
 
-function drawRibbon(x, y, isTrap) {
+function drawRibbon(x, y, isTrap, scale) {
     ctx.save(); ctx.translate(x, y);
-    ctx.strokeStyle = outlineColor; ctx.lineWidth = outlineWidth;
+    ctx.strokeStyle = "#1e293b"; ctx.lineWidth = 1.2;
+    ctx.scale(scale, scale);
     if (!isTrap) {
         ctx.fillStyle = "#064e3b";
         ctx.beginPath(); ctx.moveTo(0, -2); ctx.lineTo(-22, -12); ctx.lineTo(-22, 8); ctx.closePath(); ctx.fill(); ctx.stroke();
         ctx.beginPath(); ctx.moveTo(0, -2); ctx.lineTo(22, -12); ctx.lineTo(22, 8); ctx.closePath(); ctx.fill(); ctx.stroke();
-        ctx.fillRect(-14, 3, 8, 20); ctx.fillRect(6, 3, 8, 20);
-        ctx.strokeRect(-14, 3, 8, 20); ctx.strokeRect(6, 3, 8, 20);
-        // 입체 체크 하이라이트 선
-        ctx.strokeStyle = "#2563eb"; ctx.lineWidth = 1.5; ctx.strokeRect(-19, -7, 38, 10);
+        ctx.fillRect(-14, 3, 8, 20); ctx.fillRect(6, 3, 8, 20); ctx.strokeRect(-14, 3, 8, 20); ctx.strokeRect(6, 3, 8, 20);
     } else {
         ctx.fillStyle = "#dc2626"; ctx.fillRect(-5, -15, 10, 32); ctx.strokeRect(-5, -15, 10, 32);
     }
     ctx.restore();
 }
 
-function drawVest(x, y, isTrap) {
-    ctx.save(); ctx.translate(x, y);
-    applyPremiumStyle(ctx, "#4b5563", "#374151");
-    ctx.fillRect(-20, -15, 40, 38); ctx.strokeRect(-20, -15, 40, 38);
-    
+function drawVest(x, y, isTrap, scale) {
+    ctx.save(); ctx.translate(x, y); ctx.scale(scale, scale);
+    ctx.strokeStyle = "#1e293b"; ctx.lineWidth = 1.2;
+    ctx.fillStyle = "#4b5563"; ctx.fillRect(-20, -15, 40, 38); ctx.strokeRect(-20, -15, 40, 38);
     if (!isTrap) {
         ctx.strokeStyle = "#fbbf24"; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.moveTo(-9, -15); ctx.lineTo(0, -3); ctx.lineTo(9, -15); ctx.stroke(); // 노란 브이넥 선
-        ctx.fillStyle = "#10b981"; ctx.beginPath(); ctx.arc(-8, -2, 4, 0, Math.PI*2); ctx.fill(); // 가슴 로고
+        ctx.beginPath(); ctx.moveTo(-9, -15); ctx.lineTo(0, -3); ctx.lineTo(9, -15); ctx.stroke();
+        ctx.fillStyle = "#10b981"; ctx.beginPath(); ctx.arc(-8, -2, 4, 0, Math.PI*2); ctx.fill();
     }
     ctx.restore();
 }
 
-function drawSkirt(x, y, isTrap) {
-    ctx.save(); ctx.translate(x, y);
+function drawSkirt(x, y, isTrap, scale) {
+    ctx.save(); ctx.translate(x, y); ctx.scale(scale, scale);
+    ctx.strokeStyle = "#1e293b"; ctx.lineWidth = 1.2;
     if (!isTrap) {
-        applyPremiumStyle(ctx, "#1e1b4b", "#0f0e26");
+        ctx.fillStyle = "#1e1b4b";
         ctx.beginPath(); ctx.moveTo(-17, -15); ctx.lineTo(17, -15); ctx.lineTo(25, 22); ctx.lineTo(-24, 22); ctx.closePath(); ctx.fill(); ctx.stroke();
-        ctx.strokeStyle = "#111827"; ctx.lineWidth = 1.5;
+        ctx.strokeStyle = "#111827";
         for (let i = -12; i <= 12; i += 4) { ctx.beginPath(); ctx.moveTo(i, -15); ctx.lineTo(i * 1.3, 22); ctx.stroke(); }
     } else {
-        applyPremiumStyle(ctx, "#6b7280", "#4b5563");
-        ctx.fillRect(-17, -15, 15, 38); ctx.fillRect(2, -15, 15, 38);
-        ctx.strokeRect(-17, -15, 15, 38); ctx.strokeRect(2, -15, 15, 38);
+        ctx.fillStyle = "#6b7280"; ctx.fillRect(-17, -15, 15, 38); ctx.fillRect(2, -15, 15, 38); ctx.strokeRect(-17, -15, 15, 38); ctx.strokeRect(2, -15, 15, 38);
     }
     ctx.restore();
 }
 
-function drawJacket(x, y, isTrap) {
-    ctx.save(); ctx.translate(x, y);
-    applyPremiumStyle(ctx, isTrap ? "#334155" : "#0f172a", isTrap ? "#1e293b" : "#020617");
-    ctx.fillRect(-22, -18, 44, 42); ctx.strokeRect(-22, -18, 44, 42);
-    
+function drawJacket(x, y, isTrap, scale) {
+    ctx.save(); ctx.translate(x, y); ctx.scale(scale, scale);
+    ctx.strokeStyle = "#1e293b"; ctx.lineWidth = 1.2;
+    ctx.fillStyle = isTrap ? "#334155" : "#0f172a"; ctx.fillRect(-22, -18, 44, 42); ctx.strokeRect(-22, -18, 44, 42);
     if (!isTrap) {
-        ctx.fillStyle = "#fbbf24"; // 영롱한 초미니 황금 단추 볼륨업
-        ctx.beginPath(); 
-        ctx.arc(-8, -3, 3, 0, Math.PI*2); ctx.arc(8, -3, 3, 0, Math.PI*2);
-        ctx.arc(-8, 9, 3, 0, Math.PI*2); ctx.arc(8, 9, 3, 0, Math.PI*2);
-        ctx.fill();
+        ctx.fillStyle = "#fbbf24";
+        ctx.beginPath(); ctx.arc(-8, -3, 2.5, 0, Math.PI*2); ctx.arc(8, -3, 2.5, 0, Math.PI*2); ctx.arc(-8, 9, 2.5, 0, Math.PI*2); ctx.arc(8, 9, 2.5, 0, Math.PI*2); ctx.fill();
     }
     ctx.restore();
 }
 
 // ==========================================
-// 🚧 [원작 이식] 무시무시한 스케일의 거대 복도 장애물 3종
+// 🚧 [원작 재현] 입체적으로 커지며 돌진하는 거대 장애물
 // ==========================================
-function drawObstacle(x, y, obsType) {
-    ctx.save(); ctx.translate(x, y);
-    ctx.strokeStyle = outlineColor; ctx.lineWidth = outlineWidth;
+function drawObstacle(x, y, obsType, scale) {
+    ctx.save(); ctx.translate(x, y); ctx.scale(scale, scale);
+    ctx.strokeStyle = "#0b0f19"; ctx.lineWidth = 1.5;
 
     if (obsType === "giant_cart") {
-        // 1. 선명한 블루 명암이 적용된 폭주 대청소 카트
-        let cartGrad = ctx.createLinearGradient(-35, -10, -35, 30);
-        cartGrad.addColorStop(0, "#0ea5e9"); cartGrad.addColorStop(1, "#0369a1");
-        ctx.fillStyle = cartGrad; ctx.fillRect(-35, -10, 70, 40); ctx.strokeRect(-35, -10, 70, 40);
-        
-        ctx.fillStyle = "#facc15"; ctx.fillRect(-28, -32, 56, 22); ctx.strokeRect(-28, -32, 56, 22);
+        ctx.fillStyle = "#0284c7"; ctx.fillRect(-35, -10, 70, 40); ctx.strokeRect(-35, -10, 70, 40);
+        ctx.fillStyle = "#fbbf24"; ctx.fillRect(-28, -32, 56, 22); ctx.strokeRect(-28, -32, 56, 22);
         ctx.strokeStyle = "#475569"; ctx.lineWidth = 4;
-        ctx.beginPath(); ctx.moveTo(-18, -32); ctx.lineTo(-30, -55); ctx.moveTo(18, -32); ctx.lineTo(30, -55); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-18, -32); ctx.lineTo(-28, -55); ctx.moveTo(18, -32); ctx.lineTo(30, -55); ctx.stroke();
     } else if (obsType === "stacked_desks") {
-        // 2. 쏟아질 듯 위태로운 고층 나무 책상/의자 적재 더미
-        let deskGrad = ctx.createLinearGradient(-32, -25, -32, -13);
-        deskGrad.addColorStop(0, "#d97706"); deskGrad.addColorStop(1, "#78350f");
-        ctx.fillStyle = deskGrad; ctx.fillRect(-32, -25, 64, 12); ctx.strokeRect(-32, -25, 64, 12);
+        ctx.fillStyle = "#b45309"; ctx.fillRect(-32, -25, 64, 12); ctx.strokeRect(-32, -25, 64, 12);
         ctx.fillRect(-24, 6, 48, 12); ctx.strokeRect(-24, 6, 48, 12);
-        
         ctx.strokeStyle = "#334155"; ctx.lineWidth = 3.5;
         ctx.beginPath(); ctx.moveTo(-26, -13); ctx.lineTo(-26, 6); ctx.moveTo(26, -13); ctx.lineTo(26, 6); ctx.stroke();
     } else if (obsType === "high_hurdle") {
-        // 3. 서브웨이 서퍼 시그니처: 얼룩말 패턴 고층 펜스 허들
         ctx.fillStyle = "#dc2626"; ctx.fillRect(-32, -42, 7, 75); ctx.fillRect(25, -42, 7, 75);
         ctx.strokeRect(-32, -42, 7, 75); ctx.strokeRect(25, -42, 7, 75);
-        
         let barGrad = ctx.createLinearGradient(-25, 0, 25, 0);
         barGrad.addColorStop(0, "#1e293b"); barGrad.addColorStop(0.5, "#ffffff"); barGrad.addColorStop(1, "#1e293b");
         ctx.fillStyle = barGrad; ctx.fillRect(-25, -42, 50, 15); ctx.strokeRect(-25, -42, 50, 15);
@@ -209,100 +190,108 @@ function drawObstacle(x, y, obsType) {
 }
 
 // ==========================================
-// 👮‍♂️ 3. [비주얼 특화] 실시간 무빙 추격 학생주임 선생님
+// 👮‍♂️ 3. [추격 비주얼 극대화] 3D 스케일 애니메이팅 단속 선생님
 // ==========================================
-function drawDetailedTeacher(y) {
-    ctx.save();
-    let alertGrad = ctx.createLinearGradient(0, y, 0, y + 150);
-    alertGrad.addColorStop(0, "rgba(220, 38, 38, 0.95)");
-    alertGrad.addColorStop(1, "rgba(15, 23, 42, 0.85)");
-    ctx.fillStyle = alertGrad; ctx.fillRect(0, y, 450, 150);
+function draw3DTeacher() {
+    // 선생님의 3D 거리는 플레이어 바로 뒤(Z축 압박감)로 환산하여 렌더링
+    let teacherProgress = 1.05 - (teacherDistance * 0.08); 
+    if (teacherProgress < 0.3) return; // 너무 멀면 안 보임
 
-    let centerX = 225 + Math.sin(gameTime * 0.25) * 30; // 무섭게 좌우로 좁혀오는 슬라이딩 트래킹
-    
-    // 정장 실루엣 명암
-    ctx.fillStyle = "#1e293b"; ctx.strokeStyle = outlineColor; ctx.lineWidth = outlineWidth;
-    ctx.beginPath(); ctx.moveTo(centerX - 60, y + 120); ctx.lineTo(centerX - 42, y + 55);
-    ctx.lineTo(centerX + 42, y + 55); ctx.lineTo(centerX + 60, y + 120); ctx.closePath(); ctx.fill(); ctx.stroke();
+    let centerX = vanishX + Math.sin(gameTime * 0.2) * 20 * teacherProgress;
+    let centerY = vanishY + (playerY - vanishY) * teacherProgress;
+    let tScale = teacherProgress * 1.5;
 
-    // 분노의 페이스 리얼 그래픽
-    ctx.fillStyle = "#fca5a5"; ctx.beginPath(); ctx.arc(centerX, y + 28, 22, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.save(); ctx.translate(centerX, centerY); ctx.scale(tScale, tScale);
+    ctx.strokeStyle = "#000000"; ctx.lineWidth = 1.5;
+
+    // 거대한 위압감의 정장 어깨선
+    ctx.fillStyle = "#1e293b";
+    ctx.beginPath(); ctx.moveTo(-55, 90); ctx.lineTo(-40, 30); ctx.lineTo(40, 30); ctx.lineTo(55, 90); ctx.closePath(); ctx.fill(); ctx.stroke();
+
+    // 분노로 붉어진 학생주임 선생님의 리얼 페이스
+    ctx.fillStyle = "#fca5a5"; ctx.beginPath(); ctx.arc(0, 5, 20, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
     ctx.strokeStyle = "#000000"; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(centerX - 8, y + 24, 6, 0, Math.PI * 2); ctx.arc(centerX + 8, y + 24, 6, 0, Math.PI * 2); ctx.stroke(); // 검은 안경테
-    ctx.fillStyle = "#ef4444"; ctx.fillRect(centerX - 5, y + 38, 10, 5); // 호루라기를 문 입
+    ctx.beginPath(); ctx.arc(-7, 2, 5, 0, Math.PI * 2); ctx.arc(7, 2, 5, 0, Math.PI * 2); ctx.stroke(); // 안경
+    ctx.fillStyle = "#ef4444"; ctx.fillRect(-4, 14, 8, 4); // 화가 난 입
 
+    // 뒤에서 쫓아오며 불어대는 무시무시한 단속 경고 시각화
+    if (teacherDistance <= 2.5 && Math.floor(gameTime / 6) % 2 === 0) {
+        ctx.fillStyle = "#facc15"; ctx.font = "bold 12px sans-serif"; ctx.textAlign = "center";
+        ctx.fillText("거기 안 서?! 📢", 0, -25);
+    }
     ctx.restore();
 }
 
 function update() {
     if (isGameOver) return;
     gameTime++;
+    if (roundMessageTimer > 0) roundMessageTimer--;
 
-    // 라운드 가속 기믹 동기화 연산
-    let roundMultiplier = 1.0 + (currentRound - 1) * 0.3;
-    gameSpeed = (baseSpeed * roundMultiplier) + (score / 1500);
+    // 라운드 및 점수 비례 속도 자동 증가 연산
+    let roundMultiplier = 1.0 + (currentRound - 1) * 0.35;
+    gameSpeed = baseSpeed * roundMultiplier + (score / 150000);
 
-    player.currentX += (player.targetX - player.currentX) * 0.24;
-    player.animFrame += 0.18;
+    // 플레이어 좌우 3라인 레일 이동 보정 LERP
+    player.targetLaneX = (player.lane - 1) * 145;
+    player.currentLaneX += (player.targetLaneX - player.currentLaneX) * 0.25;
+    player.animFrame += 0.2;
 
-    // 점프 가속도 역학 물리 연산
+    // 고공 점프 중력 가속도 연산
     if (!player.isGrounded) {
         player.yOffset += player.vy;
         player.vy += gravity;
         if (player.yOffset >= 0) {
-            player.yOffset = 0;
-            player.vy = 0;
-            player.isGrounded = true;
+            player.yOffset = 0; player.vy = 0; player.isGrounded = true;
         }
     }
 
     spawnTimer++;
-    // 라운드가 올라갈수록 장애물 배치가 미치도록 빽빽해집니다.
-    let adaptiveSpawnInterval = Math.max(25, 68 - (score / 450) - (currentRound * 7));
-    if (spawnTimer > adaptiveSpawnInterval) { spawn(); spawnTimer = 0; }
+    // 라운드가 올라갈수록 아이템과 거대 장애물이 쉴 틈 없이 빽빽하게 쏟아짐
+    let adaptiveInterval = Math.max(22, 65 - (score / 350) - (currentRound * 8));
+    if (spawnTimer > adaptiveInterval) { spawn(); spawnTimer = 0; }
 
+    // 3D Progress (0에서 1로 향해 돌진) 관리 및 완벽 충돌 연산
     for (let i = items.length - 1; i >= 0; i--) {
-        items[i].y += gameSpeed;
+        items[i].progress += gameSpeed;
 
-        // [버그 대수정] 시간 정지(Freeze) 현상 원천 방지를 위한 'processed' 단판 승부 플래그 가동
-        if (items[i].y > 490 && items[i].y < 550 && items[i].lane === player.lane && !items[i].processed) {
+        // 플레이어 시야(판정선 progress 0.88 ~ 0.98) 통과 시 충돌 체크
+        if (items[i].progress >= 0.88 && items[i].progress <= 0.98 && items[i].lane === player.lane) {
             if (items[i].isObstacle) {
-                if (player.yOffset > -38) { // 바닥 상태일 때만 충돌 판정 가동 (점프 성공 시 패스 가능!)
+                if (player.yOffset > -35) { // 점프 높이가 낮으면 무조건 거대 크래시 적발!
                     teacherDistance -= 1.6; 
                     score = Math.max(0, score - 200);
-                    items[i].processed = true;
                     items.splice(i, 1);
                 }
             } else {
+                // 의류 아이템 직접 매칭 획득 로직
                 if (!items[i].isTrap) {
                     player.stage++;
-                    score += 400;
+                    score += 500;
                     teacherDistance = Math.min(5.0, teacherDistance + 1.0);
                     
-                    // 5종 다 모으면 부드럽게 다음 라운드로 전환
+                    // [라운드 전환 버그 전면 수정] 화면 안 멈추는 세련된 배너 교체 로직
                     if (player.stage >= 5 && currentRound < 3) {
                         currentRound++;
-                        player.stage = 0; // 사복으로 초기화 재출발
+                        player.stage = 0; // 다음 라운드 사복 재출발
                         teacherDistance = 5.0;
                         items = [];
-                        alert(`🎒 ROUND ${currentRound} 진입! 가속도와 장애물 밀도가 한계치까지 폭증합니다!`);
+                        roundMessage = `🎉 ROUND ${currentRound}: 속도 및 밀도 한계 돌파!`;
+                        roundMessageTimer = 150;
+                        break;
                     }
                 } else {
-                    if (player.stage > 0) player.stage--; 
+                    if (player.stage > 0) player.stage--; // 사복 먹으면 의상 탈의 벌칙
                     teacherDistance -= 2.2;
                 }
-                items[i].processed = true;
                 items.splice(i, 1);
             }
             continue;
         }
 
-        // 플레이어가 무사히 점프로 뛰어넘어 지나간 장애물은 안전하게 처리 플래그 부여
-        if (items[i].y >= 550 && !items[i].processed) {
-            items[i].processed = true;
+        // 화면 밖 유출 오브젝트 삭제
+        if (items[i].progress > 1.2) {
+            items.splice(i, 1);
         }
-
-        if (items[i].y > 720) items.splice(i, 1);
     }
 
     if (teacherDistance <= 0) isGameOver = true;
@@ -312,130 +301,136 @@ function draw() {
     ctx.clearRect(0, 0, 450, 700);
 
     // ==========================================
-    // ☀️ 1. [가시성 극대화] 세련된 파스텔톤 창문 햇살 광원 복도 아트워크
+    // ☀️ 1. [고가시성 세련된 채광] Pseudo-3D 원근 묘사 학교 복도
     // ==========================================
-    let wallColor, floorColor1, floorColor2, sunBeamColor;
-    if (currentRound === 1) { // 1라: 청량하고 화창한 아침 민트 복도
-        wallColor = "#e6f4ea"; floorColor1 = "#f1f3f5"; floorColor2 = "#dbeafe";
-        sunBeamColor = "rgba(255, 255, 255, 0.25)"; // 촌스러운 주황색 완전 박멸, 은은한 투명 백색광
-    } else if (currentRound === 2) { // 2라: 감성적인 보라빛 방과후 노을 복도
+    let wallColor, floorColor1, floorColor2, sunBeam;
+    if (currentRound === 1) { // 1라: 상쾌한 햇살 아침 민트 복도
+        wallColor = "#e6f4ea"; floorColor1 = "#f1f3f5"; floorColor2 = "#cfe2fe";
+        sunBeam = "rgba(255, 255, 255, 0.25)";
+    } else if (currentRound === 2) { // 2라: 감성적인 석양 노을 보라 복도
         wallColor = "#f3e8ff"; floorColor1 = "#faf5ff"; floorColor2 = "#e9d5ff";
-        sunBeamColor = "rgba(216, 180, 254, 0.2)";
-    } else { // 3라: 사이버 펑크 스타일 야간 자율학습 심야 탈출 모드
+        sunBeam = "rgba(216, 180, 254, 0.22)";
+    } else { // 3라: 사이버네틱 미드나잇 야자 탈출 헬모드
         wallColor = "#0f172a"; floorColor1 = "#1e293b"; floorColor2 = "#020617";
-        sunBeamColor = "rgba(99, 102, 241, 0.15)";
+        sunBeam = "rgba(99, 102, 241, 0.15)";
     }
 
+    // 기본 레이아웃 구성
     ctx.fillStyle = "#1e293b"; ctx.fillRect(0, 0, 450, 700); 
-    ctx.fillStyle = wallColor; ctx.fillRect(0, 0, 100, 700); ctx.fillRect(350, 0, 100, 700); 
+    ctx.fillStyle = wallColor; ctx.fillRect(0, 0, 90, 700); ctx.fillRect(360, 0, 90, 700); 
     
-    // 고급 우드/테라조 느낌의 경계 가시성 전용 바닥 타일 설계
-    let floorGrad = ctx.createLinearGradient(0, 180, 0, 700);
+    // 원근감 극대화형 그라데이션 바닥 타일
+    let floorGrad = ctx.createLinearGradient(0, vanishY, 0, 700);
     floorGrad.addColorStop(0, floorColor1); floorGrad.addColorStop(1, floorColor2);
-    ctx.fillStyle = floorGrad; ctx.fillRect(100, 180, 250, 520);
+    ctx.fillStyle = floorGrad; ctx.fillRect(90, vanishY, 270, 700 - vanishY);
 
-    // [이펙트 신공] 창문 투명 레이어 자연광 명암 연출
-    ctx.fillStyle = sunBeamColor;
-    ctx.beginPath(); ctx.moveTo(0, 210); ctx.lineTo(290, 700); ctx.lineTo(170, 700); ctx.lineTo(0, 330); ctx.closePath(); ctx.fill();
+    // [피드백 반영] 은은하고 투명하게 대각선으로 쏟아지는 고급스러운 파스텔 햇살 효과
+    ctx.fillStyle = sunBeam;
+    ctx.beginPath(); ctx.moveTo(0, vanishY + 10); ctx.lineTo(280, 700); ctx.lineTo(150, 700); ctx.lineTo(0, vanishY + 120); ctx.closePath(); ctx.fill();
 
-    // 3라인 가이드라인 트랙 동기화 (다크 그린 슬림 라인)
-    ctx.strokeStyle = "rgba(16, 185, 129, 0.3)"; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.moveTo(150, 180); ctx.lineTo(125, 700); ctx.moveTo(300, 180); ctx.lineTo(325, 700); ctx.stroke();
+    // 3라인 레일 궤적 가이드라인 렌더링
+    ctx.strokeStyle = "rgba(16, 185, 129, 0.35)"; ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(vanishX - 45, vanishY); ctx.lineTo(120, 700);
+    ctx.moveTo(vanishX + 45, vanishY); ctx.lineTo(330, 700);
+    ctx.stroke();
 
     // ==========================================
-    // 💎 2. 가이드 텍스트 흔적 없는 순수 그래픽 드롭 아이템 & 장애물
+    // 👮‍♂️ 2. 뒤에서 3D 스케일로 압박해오는 단속 선생님 렌더링
+    // ==========================================
+    draw3DTeacher();
+
+    // ==========================================
+    // 💎 3. 3D 원근 투사로 다가오는 아이템 & 거대 장애물
     // ==========================================
     items.forEach(item => {
+        let pos = get3DPosition(item.lane, item.progress);
         if (item.isObstacle) {
-            drawObstacle(item.x, item.y, item.obsType);
+            drawObstacle(pos.x, pos.y, item.obsType, pos.scale);
         } else {
-            if (item.type === 0) drawBlouse(item.x, item.y, item.isTrap);
-            else if (item.type === 1) drawRibbon(item.x, item.y, item.isTrap);
-            else if (item.type === 2) drawVest(item.x, item.y, item.isTrap);
-            else if (item.type === 3) drawSkirt(item.x, item.y, item.isTrap);
-            else if (item.type === 4) drawJacket(item.x, item.y, item.isTrap);
+            if (item.type === 0) drawBlouse(pos.x, pos.y, item.isTrap, pos.scale);
+            else if (item.type === 1) drawRibbon(pos.x, pos.y, item.isTrap, pos.scale);
+            else if (item.type === 2) drawVest(pos.x, pos.y, item.isTrap, pos.scale);
+            else if (item.type === 3) drawSkirt(pos.x, pos.y, item.isTrap, pos.scale);
+            else if (item.type === 4) drawJacket(pos.x, pos.y, item.isTrap, pos.scale);
         }
     });
 
     // ==========================================
-    // 🏃‍♀️ 4. 플레이어 캐릭터 (포니테일 묶은 머리 역동적 흔들림 구현)
+    // 🏃‍♀️ 4. 플레이어 캐릭터 (포니테일 찰랑임 및 고공 점프 Y축 완벽 연동)
     // ==========================================
-    let pX = player.currentX;
-    let pY = 550 + player.yOffset; 
+    let pScreenX = vanishX + player.currentLaneX;
+    let pScreenY = playerY + player.yOffset;
     let hairSway = Math.sin(player.animFrame) * 8;
 
-    ctx.strokeStyle = outlineColor; ctx.lineWidth = outlineWidth;
-    ctx.fillStyle = "#ffedd5"; ctx.beginPath(); ctx.arc(pX, pY - 35, 14, 0, Math.PI*2); ctx.fill(); ctx.stroke(); 
+    ctx.strokeStyle = "#1e293b"; ctx.lineWidth = outlineWidth;
+    ctx.fillStyle = "#ffedd5"; ctx.beginPath(); ctx.arc(pScreenX, pScreenY - 35, 15, 0, Math.PI*2); ctx.fill(); ctx.stroke(); // 두상
 
-    // [기획 절대 사수] 뛰어야 하니까 뒤로 야무지게 질러 묶은 포니테일 머리 꼬리 구현
-    ctx.fillStyle = "#0f172a"; ctx.beginPath(); ctx.arc(pX, pY - 44, 6, 0, Math.PI*2); ctx.fill(); 
-    ctx.beginPath(); ctx.moveTo(pX, pY - 44); ctx.quadraticCurveTo(pX + hairSway, pY - 24, pX + hairSway * 1.4, pY - 5);
-    ctx.lineTo(pX - 5, pY - 44); ctx.closePath(); ctx.fillStyle = "#1e293b"; ctx.fill(); ctx.stroke();
+    // [기획 절대 사수] 뒤로 단정하게 찰랑이며 흔들리는 포니테일 묶은 머리
+    ctx.fillStyle = "#0f172a"; ctx.beginPath(); ctx.arc(pScreenX, pScreenY - 44, 6, 0, Math.PI*2); ctx.fill(); 
+    ctx.beginPath(); ctx.moveTo(pScreenX, pScreenY - 44); ctx.quadraticCurveTo(pScreenX + hairSway, pScreenY - 24, pScreenX + hairSway * 1.4, pScreenY - 4);
+    ctx.lineTo(pScreenX - 5, pScreenY - 44); ctx.closePath(); ctx.fillStyle = "#334155"; ctx.fill(); ctx.stroke();
 
-    // 시작 조건 사복 차림 스타트 -> 실시간 순차 레이어드 의복 체인지 엔진
+    // 0단계 완전 사복 상태 스타트 -> 실시간 누적 교복 스킨 체인지 연출
     if (player.stage === 0) {
-        ctx.fillStyle = "#cbd5e1"; ctx.fillRect(pX-15, pY-15, 30, 40); ctx.strokeRect(pX-15, pY-15, 30, 40); // 헷갈리는 사복 흰티 형상화
-        ctx.fillStyle = "#475569"; ctx.fillRect(pX-13, pY+25, 26, 25); ctx.strokeRect(pX-13, pY+25, 26, 25); // 사복 회색 추리닝 형상화
+        ctx.fillStyle = "#cbd5e1"; ctx.fillRect(pScreenX-16, pScreenY-15, 32, 42); ctx.strokeRect(pScreenX-16, pScreenY-15, 32, 42); // 사복 티
+        ctx.fillStyle = "#475569"; ctx.fillRect(pScreenX-14, pScreenY+27, 28, 25); ctx.strokeRect(pScreenX-14, pScreenY+27, 28, 25); // 사복 추리닝
     } else {
-        if (player.stage >= 1) { ctx.fillStyle = "#ffffff"; ctx.fillRect(pX-15, pY-15, 30, 40); ctx.strokeRect(pX-15, pY-15, 30, 40); } 
-        if (player.stage >= 2) { ctx.fillStyle = "#064e3b"; ctx.beginPath(); ctx.arc(pX, pY-6, 5, 0, Math.PI*2); ctx.fill(); ctx.stroke(); } 
-        if (player.stage >= 3) { ctx.fillStyle = "#4b5563"; ctx.fillRect(pX-15, pY-10, 30, 35); ctx.strokeRect(pX-15, pY-10, 30, 35); } 
-        if (player.stage >= 4) { ctx.fillStyle = "#1e1b4b"; ctx.fillRect(pX-17, pY+25, 34, 22); ctx.strokeRect(pX-17, pY+25, 34, 22); } 
-        if (player.stage >= 5) { ctx.fillStyle = "#0f172a"; ctx.fillRect(pX-17, pY-15, 34, 42); ctx.strokeRect(pX-17, pY-15, 34, 42); } 
+        if (player.stage >= 1) { ctx.fillStyle = "#ffffff"; ctx.fillRect(pScreenX-16, pScreenY-15, 32, 42); ctx.strokeRect(pScreenX-16, pScreenY-15, 32, 42); } 
+        if (player.stage >= 2) { ctx.fillStyle = "#064e3b"; ctx.beginPath(); ctx.arc(pScreenX, pScreenY-6, 5, 0, Math.PI*2); ctx.fill(); ctx.stroke(); } 
+        if (player.stage >= 3) { ctx.fillStyle = "#4b5563"; ctx.fillRect(pScreenX-16, pScreenY-10, 32, 37); ctx.strokeRect(pScreenX-16, pScreenY-10, 32, 37); } 
+        if (player.stage >= 4) { ctx.fillStyle = "#1e1b4b"; ctx.fillRect(pScreenX-18, pScreenY+27, 36, 24); ctx.strokeRect(pScreenX-18, pScreenY+27, 36, 24); } 
+        if (player.stage >= 5) { ctx.fillStyle = "#0f172a"; ctx.fillRect(pScreenX-18, pScreenY-15, 36, 44); ctx.strokeRect(pScreenX-18, pScreenY-15, 36, 44); } 
     }
 
     // ==========================================
-    // 👮‍♂️ 5. 거리에 따라 박진감 넘치게 덮쳐오는 단속 선생님 렌더링
+    // 📊 5. 탑 스마트 대시보드 및 [교복 착용도 메칭 게이지바]
     // ==========================================
-    let teacherTopY = 700 - (5.0 - teacherDistance) * 38;
-    drawDetailedTeacher(teacherTopY);
-    
-    if (teacherDistance <= 2.5 && Math.floor(gameTime / 6) % 2 === 0) {
-        ctx.fillStyle = "#facc15"; ctx.font = "bold 22px sans-serif"; ctx.textAlign = "center";
-        ctx.fillText("📢 거기 안 서?! 호루라기 폭풍 단속!!!", pX, teacherTopY - 25);
-    }
-
-    // ==========================================
-    // 📊 6. 대시보드 스코어 및 [실시간 교복 매칭 완비 게이지바] UI
-    // ==========================================
-    ctx.fillStyle = "rgba(15, 23, 42, 0.95)"; ctx.fillRect(15, 15, 420, 105);
-    ctx.strokeStyle = "#10b981"; ctx.lineWidth = 2.5; ctx.strokeRect(15, 15, 420, 105);
+    ctx.fillStyle = "rgba(15, 23, 42, 0.95)"; ctx.fillRect(15, 15, 430, 105);
+    ctx.strokeStyle = "#10b981"; ctx.lineWidth = 2.5; ctx.strokeRect(15, 15, 430, 105);
     
     ctx.fillStyle = "#ffffff"; ctx.font = "bold 13px sans-serif"; ctx.textAlign = "left";
-    ctx.fillText(`🏫 이화 런 게임 (ROUND ${currentRound} / 3)`, 30, 42);
+    ctx.fillText(`🏫 3D 이화 러너즈 (ROUND ${currentRound} / 3)`, 30, 42);
     
     ctx.fillStyle = "#4ade80"; ctx.font = "bold 18px monospace"; ctx.textAlign = "right";
     ctx.fillText("SCORE: " + score, 415, 42);
 
-    // 프리미엄 럭셔리 실시간 착용률 게이지 시스템
+    // 프리미엄 실시간 게이지
     ctx.fillStyle = "#1e293b"; ctx.fillRect(30, 65, 390, 24); 
     let gaugeWidth = (player.stage / 5) * 390;
-    
     let gaugeGrad = ctx.createLinearGradient(30, 0, 420, 0);
     gaugeGrad.addColorStop(0, "#10b981"); gaugeGrad.addColorStop(1, "#3b82f6"); 
     ctx.fillStyle = gaugeGrad; ctx.fillRect(30, 65, gaugeWidth, 24);
     
     ctx.fillStyle = "#ffffff"; ctx.font = "bold 11px sans-serif"; ctx.textAlign = "center";
-    ctx.fillText(`현재 라운드 교복 완성도: ${player.stage * 20}% 장착 완료`, 225, 81);
+    ctx.fillText(`현재 등교 정복률: ${player.stage * 20}% 완료`, 225, 81);
 
-    // 게임 오버 핸들러 트리거
+    // ==========================================
+    // 🔄 6. [버그 완전 박멸] 실시간 인게임 라운드 전환 안내 배너
+    // ==========================================
+    if (roundMessageTimer > 0) {
+        ctx.fillStyle = "rgba(16, 185, 129, 0.85)"; ctx.fillRect(0, 280, 450, 60);
+        ctx.fillStyle = "#ffffff"; ctx.font = "bold 18px sans-serif"; ctx.textAlign = "center";
+        ctx.fillText(roundMessage, 225, 318);
+    }
+
+    // 엔딩 시나리오 제어
     if (isGameOver) {
         ctx.fillStyle = "rgba(11, 15, 25, 0.97)"; ctx.fillRect(0, 0, 450, 700);
         ctx.fillStyle = "#ef4444"; ctx.font = "bold 30px sans-serif"; ctx.textAlign = "center";
-        ctx.fillText("🚨 교무실행 반성문 엔딩 🚨", 225, 310);
+        ctx.fillText("🚨 교무실행 엔딩 🚨", 225, 320);
         ctx.fillStyle = "#ffffff"; ctx.font = "15px sans-serif";
-        ctx.fillText("사복 함정에 교란당했거나 빽빽한 거대 장애물에 걸려 검거되었습니다.", 225, 360);
-        ctx.fillStyle = "#64748b"; ctx.fillText("다시 등교 페이스를 올리려면 새로고침(F5)을 누르세요!", 225, 400);
+        ctx.fillText("3D 거대 장애물에 박혔거나 사복 함정에 걸려 붙잡혔습니다.", 225, 370);
+        ctx.fillStyle = "#64748b"; ctx.fillText("다시 질주하려면 새로고침(F5)을 누르세요!", 225, 410);
     }
     
-    // 3라운드 최종 클리어 성공 판단식
     if (currentRound >= 3 && player.stage >= 5) {
         ctx.fillStyle = "rgba(4, 120, 87, 0.98)"; ctx.fillRect(0, 0, 450, 700);
         ctx.fillStyle = "#ffffff"; ctx.font = "bold 34px sans-serif"; ctx.textAlign = "center";
-        ctx.fillText("🏆 지상 최강의 이화러너 완결 클리어 🏆", 225, 310);
+        ctx.fillText("🏆 지상 최강의 이화러너 완결 클리어 🏆", 225, 320);
         ctx.font = "16px sans-serif"; ctx.fillStyle = "#a7f3d0";
-        ctx.fillText("세은, 서진, 하은 기획의 하드코어 3개 라운드를 전파하고", 225, 365);
-        ctx.fillText("100% 품격 넘치는 정복 세트로 안전 등교 완수 완료!", 225, 395);
+        ctx.fillText("세은, 서진, 하은 기획의 3D 공간 복도를 완벽히 지배하고", 225, 375);
+        ctx.fillText("100% 교복 정복 상태로 안전 등교 완수!", 225, 405);
     }
 }
 
